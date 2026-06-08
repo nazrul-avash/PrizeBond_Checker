@@ -1,4 +1,2 @@
 requests
-gspread
-google-auth
 beautifulsoup4
