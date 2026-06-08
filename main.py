@@ -9,7 +9,7 @@ SHEET_ID = os.environ["SHEET_ID"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-BB_URL = "https://www.bb.org.bd/en/index.php/investfacility/prizebond/pbsearch.php"
+BB_URL = "https://www.bb.org.bd/en/index.php/investfacility/prizebond"
 
 
 # ---------------- TELEGRAM ----------------
