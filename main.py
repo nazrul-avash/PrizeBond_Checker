@@ -51,19 +51,25 @@ def fetch_results(search_string):
 
 # ---------------- PARSE RESULT ----------------
 def parse_result(html):
-    text = BeautifulSoup(html, "html.parser").get_text()
+    text = BeautifulSoup(html, "html.parser").get_text(separator=" ")
 
-    if "No Match Found" in text:
+    text = text.lower()
+
+    # normalize spaces
+    text = re.sub(r"\s+", " ", text)
+
+    if "no match found" in text:
         return False, 0
 
-    if "Congratulations" in text:
-        # extract number of matches if present
-        try:
-            part = text.split("match found")[0]
-            num = [int(s) for s in part.split() if s.isdigit()]
-            return True, num[0] if num else 1
-        except:
-            return True, 1
+    # extract "X match found"
+    match = re.search(r"(\d+)\s+match found", text)
+
+    if match:
+        return True, int(match.group(1))
+
+    # fallback: if table exists, assume success
+    if "number" in text and "draw" in text:
+        return True, 1
 
     return False, 0
 
