@@ -22,8 +22,8 @@ def send_telegram(msg):
     )
 
 
-# ---------------- READ GOOGLE SHEET ----------------
-def get_input():
+# ---------------- READ SHEET ----------------
+def get_inputs():
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
     r = requests.get(url, timeout=30)
@@ -32,14 +32,10 @@ def get_input():
     f = StringIO(r.text)
     reader = csv.reader(f)
 
-    for row in reader:
-        if row and row[0].strip():
-            return row[0].strip()
-
-    return None
+    return [row[0].strip() for row in reader if row and row[0].strip()]
 
 
-# ---------------- FETCH IRD ----------------
+# ---------------- FETCH ----------------
 def fetch_result(query):
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -50,55 +46,53 @@ def fetch_result(query):
     return r.text
 
 
-# ---------------- PARSE ONLY MATCHED NUMBERS ----------------
-def extract_matches(html, query):
+# ---------------- EXTRACT WINNERS ----------------
+def extract_winners(html):
     soup = BeautifulSoup(html, "html.parser")
 
     table = soup.find("table")
-
     if not table:
         return []
 
-    matches = []
+    winners = []
 
-    rows = table.find_all("tr")
-
-    for row in rows[1:]:
+    for row in table.find_all("tr")[1:]:
         cols = [c.get_text(strip=True) for c in row.find_all("td")]
 
         if len(cols) >= 1:
-            num = cols[0]
+            winners.append(cols[0])
 
-            # ONLY check against your input
-            if query.replace("-", "").replace(",", "") in num:
-                matches.append(num)
-
-    return matches
+    return winners
 
 
 # ---------------- MAIN ----------------
 def main():
-    query = get_input()
+    inputs = get_inputs()
 
-    if not query:
-        send_telegram("❌ No input found in Google Sheet")
-        return
+    all_winners = set()  # 🔥 deduplication
 
-    html = fetch_result(query)
+    for query in inputs:
+        print(f"Checking: {query}")
 
-    matches = extract_matches(html, query)
+        html = fetch_result(query)
+        winners = extract_winners(html)
 
-    if matches:
-        msg = "🎉 PRIZE BOND MATCH FOUND!\n\n"
-        msg += f"Input: {query}\n\n"
+        # store globally
+        for w in winners:
+            all_winners.add(w)
 
-        for m in matches:
-            msg += f"- {m}\n"
+    # ---------------- FINAL RESULT ----------------
+    if all_winners:
+        msg = "🎉 PRIZE BOND WINNERS FOUND!\n\n"
+        msg += "Winning Bonds:\n\n"
 
-        msg += f"\nTotal Matches: {len(matches)}"
+        for w in sorted(all_winners):
+            msg += f"- {w}\n"
+
+        msg += f"\nTotal Unique Winners: {len(all_winners)}"
 
     else:
-        msg = f"❌ No Match Found\nInput: {query}"
+        msg = "❌ No Prize Bond Winners Found"
 
     send_telegram(msg)
     print(msg)
