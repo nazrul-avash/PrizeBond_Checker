@@ -1,9 +1,9 @@
 import os
-import requests
 import csv
+import requests
 from io import StringIO
 from bs4 import BeautifulSoup
-import re
+from playwright.sync_api import sync_playwright
 
 SHEET_ID = os.environ["SHEET_ID"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -21,10 +21,9 @@ def send_telegram(msg):
     )
 
 
-# ---------------- GOOGLE SHEET (CSV) ----------------
+# ---------------- GOOGLE SHEET CSV ----------------
 def get_entries():
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
-
     r = requests.get(url, timeout=30)
     r.raise_for_status()
 
@@ -34,32 +33,42 @@ def get_entries():
     return [row[0].strip() for row in reader if row and row[0].strip()]
 
 
-# ---------------- FETCH BB RESULT ----------------
+# ---------------- PLAYWRIGHT SEARCH ----------------
 def fetch_result(query):
-    session = requests.Session()
-    session.get(BB_URL, timeout=30)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
 
-    payload = {"bondnumber": query}
+        page = browser.new_page()
 
-    r = session.post(BB_URL, data=payload, timeout=60)
-    return r.text
+        page.goto(BB_URL, timeout=60000)
+
+        # input field
+        page.fill("input[name='bondnumber']", query)
+
+        # submit form
+        page.keyboard.press("Enter")
+
+        # wait for response
+        page.wait_for_timeout(5000)
+
+        html = page.content()
+
+        browser.close()
+
+        return html
 
 
-# ---------------- PARSER (BULLETPROOF) ----------------
+# ---------------- PARSER ----------------
 def parse(html):
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(" ", strip=True)
-    text_norm = re.sub(r"\s+", " ", text.lower())
+    text = soup.get_text(" ", strip=True).lower()
 
-    # ❌ NO MATCH CASE
-    if "no match found" in text_norm:
+    if "no match found" in text:
         return False, 0, []
 
-    # ✅ MATCH COUNT
-    match = re.search(r"(\d+)\s+match found", text_norm)
-    count = int(match.group(1)) if match else 0
-
-    # ✅ TABLE PARSING (WINNING NUMBERS)
     winners = []
     table = soup.find("table")
 
@@ -70,47 +79,34 @@ def parse(html):
             cols = [c.get_text(strip=True) for c in r.find_all("td")]
 
             if len(cols) >= 4 and cols[0].isdigit():
-                winners.append({
-                    "number": cols[0],
-                    "draw": cols[1],
-                    "prize": cols[2],
-                    "amount": cols[3],
-                })
+                winners.append(cols[0])
 
-    return True if count > 0 or winners else False, count, winners
+    if winners:
+        return True, len(winners), winners
+
+    return False, 0, []
 
 
 # ---------------- MAIN ----------------
 def main():
     entries = get_entries()
-
     query = ",".join(entries)
 
     html = fetch_result(query)
-
     found, count, winners = parse(html)
 
     if found:
         msg = "🎉 PRIZE BOND WINNER FOUND!\n\n"
 
-        if winners:
-            for w in winners[:20]:
-                msg += (
-                    f"Number: {w['number']}\n"
-                    f"Draw: {w['draw']}\n"
-                    f"Prize: {w['prize']}\n"
-                    f"Amount: {w['amount']}\n\n"
-                )
+        msg += f"Total Matches: {count}\n\n"
 
-            msg += f"Total Winners: {len(winners)}"
-
-        else:
-            msg += f"Match Count: {count}"
+        for w in winners[:20]:
+            msg += f"{w}\n"
 
     else:
         msg = (
             "❌ No Prize Bond Matches Found\n\n"
-            f"Searched Entries: {len(entries)}"
+            f"Searched: {len(entries)} numbers"
         )
 
     send_telegram(msg)
