@@ -1,15 +1,13 @@
 import os
-import csv
+import re
 import requests
-from io import StringIO
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 
-SHEET_ID = os.environ["SHEET_ID"]
+# ---------------- ENV ----------------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-BB_URL = "https://www.bb.org.bd/en/index.php/investfacility/prizebond"
+URL = "https://prizebond.ird.gov.bd/hybrid_action_b2e.php"
 
 
 # ---------------- TELEGRAM ----------------
@@ -21,95 +19,56 @@ def send_telegram(msg):
     )
 
 
-# ---------------- GOOGLE SHEET CSV ----------------
-def get_entries():
-    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-
-    f = StringIO(r.text)
-    reader = csv.reader(f)
-
-    return [row[0].strip() for row in reader if row and row[0].strip()]
-
-
-# ---------------- PLAYWRIGHT SEARCH ----------------
-def fetch_result(query):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
-        )
-
-        page = browser.new_page()
-
-        page.goto(BB_URL, timeout=60000)
-
-        # input field
-        page.fill("input[name='bondnumber']", query)
-
-        # submit form
-        page.keyboard.press("Enter")
-
-        # wait for response
-        page.wait_for_timeout(5000)
-
-        html = page.content()
-
-        browser.close()
-
-        return html
-
-
-# ---------------- PARSER ----------------
-def parse(html):
+# ---------------- PARSE WINNERS ----------------
+def extract_winners(html):
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(" ", strip=True).lower()
+    text = soup.get_text(" ", strip=True)
 
-    if "no match found" in text:
-        return False, 0, []
+    # find all 7-digit numbers in result page
+    numbers = re.findall(r"\b\d{7}\b", text)
 
-    winners = []
-    table = soup.find("table")
+    # remove duplicates
+    return sorted(set(numbers))
 
-    if table:
-        rows = table.find_all("tr")
 
-        for r in rows[1:]:
-            cols = [c.get_text(strip=True) for c in r.find_all("td")]
+# ---------------- FETCH IRD ----------------
+def fetch_result(query):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://prizebond.ird.gov.bd/SingleNumber.php",
+    }
 
-            if len(cols) >= 4 and cols[0].isdigit():
-                winners.append(cols[0])
+    data = {
+        "from": query
+    }
 
-    if winners:
-        return True, len(winners), winners
-
-    return False, 0, []
+    r = requests.post(URL, data=data, headers=headers, timeout=30)
+    return r.text
 
 
 # ---------------- MAIN ----------------
 def main():
-    entries = get_entries()
-    query = ",".join(entries)
+    # Example input (later replace with Google Sheet)
+    query = "0790061-0799965"
 
     html = fetch_result(query)
-    found, count, winners = parse(html)
 
-    if found:
-        msg = "🎉 PRIZE BOND WINNER FOUND!\n\n"
+    winners = extract_winners(html)
 
-        msg += f"Total Matches: {count}\n\n"
+    if winners:
+        msg = "🎉 PRIZE BOND MATCH FOUND!\n\n"
+        msg += "Winning Numbers:\n\n"
 
-        for w in winners[:20]:
-            msg += f"{w}\n"
+        for w in winners[:20]:  # limit spam
+            msg += f"- {w}\n"
+
+        msg += f"\nTotal Matches: {len(winners)}"
 
     else:
-        msg = (
-            "❌ No Prize Bond Matches Found\n\n"
-            f"Searched: {len(entries)} numbers"
-        )
+        msg = "❌ No Prize Bond Matches Found"
 
     send_telegram(msg)
+    print(msg)
 
 
 if __name__ == "__main__":
